@@ -1,0 +1,34 @@
+
+http://dmconnect.w10.site
+dsalin :: клиенты DMconnect: https://dsalin.rf.gd/Программы.html
+DMconnect Web: http://dmconnect.hoho.ws:777
+DMconnect (RetroNode, #downgrade, IRC): http://dmconnect.w10.site
+http://github.com/tankwars92/DMCD/
+
+
+$ telnet dmconnect.hoho.ws 42439
+/login usr34098 passw0Rd53
+
+/join_server general
+
+
+Ниже приведены строки ответа от сервера.
+Select a server using /join_server <server_name>.
+Login successful.
+Available servers: anekdots, dsalin_, general
+Enter command (/login /register): 
+Подключение установлено.
+Отправлено: /join_server general
+Ниже приведены строки ответа от сервера.
+*** usr34098 has joined the server.
+Joined server 'general' successfully.
+Отправлено: test2
+Ниже приведены строки ответа от сервера.
+Отправлено: /members
+Ниже приведены строки ответа от сервера.
+Members in 'general': Bepyaka, logger, arson-test, pro_O, Khrich, kopor'je, Archie, guester, 0010, root, dm906, Peacemaker, ZiNc, bwMate, IRC_bridge, Vasylich, perliT@geeks.l5.ca, dymka2@linuxers.hs.vc, usr34098
+usr34098: test2
+Отправлено: peace out!
+Ниже приведены строки ответа от сервера.
+usr34098: peace out!
+
