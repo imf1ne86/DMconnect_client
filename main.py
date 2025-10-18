@@ -17,6 +17,11 @@ from typing import List, Set
 from tkinter import *
 from tkinter import ttk
 
+import threading
+import queue
+from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
+
 from dmconnect import DMconnect
 from miscellaneous import Miscellaneous
 
@@ -25,6 +30,8 @@ ICON_FILE: str = os.path.join(os.path.join(os.path.dirname(__file__), "."), "log
 FONT_FACE: str = "Courier New"
 FONT_BGCOLOR: str = "#F5F5DC" # https://python-charts.com/colors/
 REFRESH_INTERVAL_MS: int = 5 * 1000 # интервал обновления чата в миллисекундах (чем больше время, тем ниже отзывчивость программы для пользователя)
+NETWORK_WORKER_POLL_INTERVAL_MS: int = 1000  # период опроса очереди задач воркером (мс)
+MAX_WORKER_THREADS: int = 1  # один поток для всех сетевых операций
 
 # --- Основное окно ---
 root: Tk = None
@@ -38,8 +45,26 @@ class Application:
 
     objDMconnect: DMconnect = None
 
+    task_queue: queue.Queue = None
+    result_queue: queue.Queue = None
+    worker_executor: Optional[ThreadPoolExecutor] = None
+    worker_thread: Optional[threading.Thread] = None
+    worker_stop_event: threading.Event = None
+
     def __init__(self):
         self.objDMconnect = DMconnect(root)
+
+        # Инициализация очередей и фонового воркера для сетевых операций
+        self.task_queue = queue.Queue()
+        self.result_queue = queue.Queue()
+        self.worker_stop_event = threading.Event()
+
+        # Используем один поток-воркер для всех сетевых операций (чтобы DMconnect не обрабатывался конкурентно)
+        self.worker_executor = ThreadPoolExecutor(max_workers=MAX_WORKER_THREADS)
+
+        # Запуск фонового потока, который будет обрабатывать задачи из task_queue
+        self.worker_thread = threading.Thread(target=self._network_worker_loop, daemon=True)
+        self.worker_thread.start()
 
         self.apply_icon()
         self.build_app()
@@ -177,14 +202,13 @@ class Application:
             if message:
                 self.add_message_to_chat(f"Вы: {message}")
                 self.message_entry.delete(0, END)
-                response_lines: Set[str] = set()
-                response_lines = self.objDMconnect.execute_command(self.objDMconnect.sock, message)
-                Miscellaneous.print_message(f"Отправлено: {message}")
-                Miscellaneous.print_message("Ниже приведены строки ответа от сервера.")
-                for response_line in response_lines:
-                    self.add_message_to_chat(response_line)
-                    print(response_line)
-                Miscellaneous.print_message("Конец печати строк ответа от сервера.")
+                # Кладём задачу на выполнение команды в фоновой воркер
+                try:
+                    self.task_queue.put(("execute_command", message))
+                    Miscellaneous.print_message(f"Отправлено: {message}")
+                    Miscellaneous.print_message("Ниже приведены строки ответа от сервера.")
+                except Exception:
+                    Miscellaneous.print_message("Ошибка при постановке задачи на выполнение команды.")
 
                 self.user_listbox_items = self.get_user_list()
                 self.populate_users_listbox()
@@ -200,12 +224,34 @@ class Application:
 
     def update_chat_messages(self):
         """
-        * Получает новые сообщения и добавляет их в чат
+        * Получает результаты от фонового потока и добавляет их в чат / список пользователей
         """
-        new_messages = self.get_messages_for_chat()
-        if new_messages:
-            for msg in new_messages:
-                self.add_message_to_chat(msg)
+        # Обрабатываем все доступные результаты из воркера
+        while True:
+            try:
+                item = self.result_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                kind, payload = item
+                if kind == "messages":
+                    for msg in payload:
+                        self.add_message_to_chat(msg)
+                elif kind == "users":
+                    self.user_listbox_items = payload
+                    self.populate_users_listbox()
+                elif kind == "command_response":
+                    for line in payload:
+                        self.add_message_to_chat(line)
+                elif kind == "error":
+                    # просто обновим статус (DMconnect изменит is_connected)
+                    pass
+            finally:
+                try:
+                    self.result_queue.task_done()
+                except Exception:
+                    pass
+        # Планируем следующее чтение результатов (не сетевой опрос)
         self.schedule_message_update()
 
     def schedule_message_update(self):
@@ -215,6 +261,50 @@ class Application:
         if not self.objDMconnect.is_connected:
             Miscellaneous.print_message("Нет соединения с сервером.")
         root.after(REFRESH_INTERVAL_MS, self.update_chat_messages)
+
+    def _network_worker_loop(self):
+        """
+        * Фоновый цикл для выполнения сетевых задач из self.task_queue.
+        * Все сетевые операции с objDMconnect должны выполняться в этом потоке.
+        """
+        while not self.worker_stop_event.is_set():
+            try:
+                task = None
+                try:
+                    task = self.task_queue.get(timeout=NETWORK_WORKER_POLL_INTERVAL_MS / 1000.0)
+                except queue.Empty:
+                    # периодически инициируем опрос сервера на новые сообщения/список пользователей
+                    if self.objDMconnect is not None and self.objDMconnect.is_connected:
+                        try:
+                            messages = self.objDMconnect.get_messages_for_chat()
+                            if messages:
+                                self.result_queue.put(("messages", messages))
+                            users = self.objDMconnect.get_user_list()
+                            if users:
+                                self.result_queue.put(("users", users))
+                        except Exception:
+                            # при ошибке поместим маркер, GUI обновит статус по is_connected
+                            self.result_queue.put(("error", None))
+                    continue
+                # обработка конкретной задачи
+                if task is None:
+                    continue
+                cmd_type, payload = task
+                if cmd_type == "execute_command":
+                    cmd = payload
+                    try:
+                        response = self.objDMconnect.execute_command(self.objDMconnect.sock, cmd)
+                        self.result_queue.put(("command_response", response))
+                    except Exception:
+                        self.result_queue.put(("error", None))
+                elif cmd_type == "shutdown":
+                    break
+            finally:
+                if task is not None:
+                    try:
+                        self.task_queue.task_done()
+                    except Exception:
+                        pass
 
     def on_user_double_click(self, event):
         """
@@ -247,6 +337,15 @@ class Application:
                     pass
                 self.objDMconnect.sock = None
                 self.objDMconnect.is_connected = False
+        try: # остановка фонового воркера
+            if self.worker_stop_event is not None:
+                self.worker_stop_event.set()
+            if self.worker_thread is not None:
+                self.worker_thread.join(timeout=2.0)
+            if self.worker_executor is not None:
+                self.worker_executor.shutdown(wait=False)
+        except Exception:
+            pass
         root.destroy()
         root.quit()
         Miscellaneous.print_message("Работа программы завершена.")
