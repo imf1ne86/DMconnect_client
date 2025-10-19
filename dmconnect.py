@@ -14,7 +14,19 @@ from tkinter import ttk
 from tkinter import messagebox
 from typing import List, Set
 from socket import socket, AF_INET, SOCK_STREAM, timeout
-from socket import SOL_SOCKET, SO_KEEPALIVE, IPPROTO_TCP, TCP_KEEPIDLE, TCP_KEEPINTVL, TCP_KEEPCNT
+from socket import SOL_SOCKET, SO_KEEPALIVE, IPPROTO_TCP
+try: # решение проблемы "ImportError: cannot import name 'TCP_KEEPCNT' from 'socket'"
+    from socket import TCP_KEEPCNT
+except ImportError:
+    TCP_KEEPCNT = None
+try: # решение проблемы "ImportError: cannot import name 'TCP_KEEPINTVL' from 'socket'"
+    from socket import TCP_KEEPINTVL
+except ImportError:
+    TCP_KEEPINTVL = None
+try: # решение проблемы "ImportError: cannot import name 'TCP_KEEPIDLE' from 'socket'"
+    from socket import TCP_KEEPIDLE
+except ImportError:
+    TCP_KEEPIDLE = None
 import sys
 import time
 import random
@@ -42,6 +54,8 @@ class DMconnect:
     def __init__(self, p_parent: Tk):
         self.root = p_parent
         self.get_config()
+        if debugged:
+            self.is_connected = True
         self.build_connect_form()
 
     def get_user_list(self) -> List[str]:
@@ -50,10 +64,12 @@ class DMconnect:
         *
         * @return Список пользователей
         """
+        if debugged: # в режиме отладки возвращаем фиксированный список пользователей без обращения в сеть
+            return [name.strip() for name in "Bepyaka, logger, arson-test, pro_O, Khrich, kopor'je, Archie, guester, 0010, root, dm906, Peacemaker, ZiNc".split(',')]
         user_list = []
         if self.is_connected: # есть вообще подключение к серверу?
             usr: str = ""
-            response_lines: Set[str] = set()
+            response_lines: List[str] = []
             if not debugged:
                 Miscellaneous.print_message("Запрос у сервера списка участников чата...")
                 response_lines = self.execute_command(self.sock, "/members")
@@ -92,7 +108,7 @@ class DMconnect:
         if self.is_connected: # есть вообще подключение к серверу?
             if not debugged:
                 Miscellaneous.print_message("Запрос у сервера сообщений чата...")
-                response_lines: Set[str] = set()
+                response_lines: List[str] = []
                 response_lines = self.read_socket(self.sock)
                 Miscellaneous.print_message("Ниже приведены строки ответа от сервера.")
                 for response_line in response_lines:
@@ -202,7 +218,7 @@ class DMconnect:
         * @param recv_timeout Таймаут получения ответ в мс
         * @return Массив строк
         """
-        response_lines: Set[str] = set()
+        response_lines: List[str] = []
         if self.is_connected: # есть вообще подключение к серверу?
             if not debugged:
                 try:
@@ -222,7 +238,7 @@ class DMconnect:
                             line = line.rstrip("\r\n")
                             if "".__eq__(line): # пустая строка - считаем конец ответа
                                 break
-                            response_lines.add(line)
+                            response_lines.append(line)
                     finally:
                         try:
                             rf.close()
@@ -247,7 +263,7 @@ class DMconnect:
         * @return Массив строк
         """
         cmd2: str = f"{cmd}{NEW_LINE}"
-        response_lines: Set[str] = set()
+        response_lines: List[str] = []
         if self.is_connected: # есть вообще подключение к серверу?
             if not debugged:
                 try:
@@ -285,9 +301,12 @@ class DMconnect:
         try:
             s.setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
             if sys.platform.startswith("linux"):
-                s.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 60) # время простоя до первого keepalive
-                s.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 10) # интервал между keepalive
-                s.setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 3) # число попыток до разрыва
+                if hasattr(socket, "TCP_KEEPIDLE"):
+                    s.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 60) # время простоя до первого keepalive
+                if hasattr(socket, "TCP_KEEPINTVL"):
+                    s.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 10) # интервал между keepalive
+                if hasattr(socket, "TCP_KEEPCNT"):
+                    s.setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 3) # число попыток до разрыва
             elif sys.platform.startswith("darwin") or "bsd" in sys.platform:
                 s.setsockopt(IPPROTO_TCP, TCP_KEEPALIVE, 60)
         except AttributeError:

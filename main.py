@@ -69,9 +69,11 @@ class Application:
         self.apply_icon()
         self.build_app()
 
-        # Получаем и отображаем список пользователей после создания UI
-        self.user_listbox_items = self.get_user_list()
-        self.populate_users_listbox()
+        # Инициализируем пустой список пользователей - начальный опрос выполнит фоновой воркер
+        self.user_listbox_items = []
+
+        # Начальная асинхронная загрузка пользователей/сообщений выполнится в воркере
+        self.task_queue.put(("initial_poll", None))
 
         # Запускаем периодическое обновление чата
         self.schedule_message_update()
@@ -210,9 +212,6 @@ class Application:
                 except Exception:
                     Miscellaneous.print_message("Ошибка при постановке задачи на выполнение команды.")
 
-                self.user_listbox_items = self.get_user_list()
-                self.populate_users_listbox()
-
     def add_message_to_chat(self, message: str):
         """
         * Добавляет сообщение в область чата
@@ -299,6 +298,17 @@ class Application:
                         self.result_queue.put(("error", None))
                 elif cmd_type == "shutdown":
                     break
+                elif cmd_type == "initial_poll":
+                    # Начальный асинхронный опрос: получить пользователей и сообщения сразу после старта
+                    try:
+                        users = self.objDMconnect.get_user_list()
+                        if users:
+                            self.result_queue.put(("users", users))
+                        messages = self.objDMconnect.get_messages_for_chat()
+                        if messages:
+                            self.result_queue.put(("messages", messages))
+                    except Exception:
+                        self.result_queue.put(("error", None))
             finally:
                 if task is not None:
                     try:
