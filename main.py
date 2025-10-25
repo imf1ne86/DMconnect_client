@@ -3,6 +3,7 @@
 * *************************
 * Программа представляет собой клиент DMconnect.
 * DMconnect Web: http://dmconnect.hoho.ws:777
+* Делаем свой клиент DMconnect: https://dmconnectcc.w10.site
 * Для работы программы требуется Python 3. Предварительно
 * требуется установить необходимые библиотеки:
 * $ pip3 install --trusted-host pypi.org --trusted-host files.pythonhosted.org --upgrade pip
@@ -32,6 +33,8 @@ FONT_BGCOLOR: str = "#F5F5DC" # https://python-charts.com/colors/
 REFRESH_INTERVAL_MS: int = 5 * 1000 # интервал обновления чата в миллисекундах (чем больше время, тем ниже отзывчивость программы для пользователя)
 NETWORK_WORKER_POLL_INTERVAL_MS: int = 1000  # период опроса очереди задач воркером (мс)
 MAX_WORKER_THREADS: int = 1  # один поток для всех сетевых операций
+MAX_LINES: int = 500  # количество строк, хранимых в чате
+MAX_STRING: int = 1024  # максимальное число символов в одной строке чата
 
 # --- Основное окно ---
 root: Tk = None
@@ -80,6 +83,17 @@ class Application:
 
     # --- Основные функции программы (расположены после __init__ для удобства) ---
 
+    def has_it_got_anything_left_for_chat(self):
+        """
+        * Проверка в буфере сообщений, есть ли что-нибудь для чата
+        """
+        if self.objDMconnect is not None:
+            if self.objDMconnect.is_connected:
+                if len(self.objDMconnect.left_for_chat) > 0: # есть что-нибудь для чата?
+                    for line in self.objDMconnect.left_for_chat:
+                        self.add_message_to_chat(line)
+                    self.objDMconnect.left_for_chat.clear()
+
     def get_user_list(self) -> List[str]:
         """
         * Возвращает массив логинов пользователей
@@ -89,9 +103,7 @@ class Application:
         user_list = []
         if self.objDMconnect.is_connected:
             user_list = self.objDMconnect.get_user_list()
-            if len(self.objDMconnect.left_for_chat) > 0: # есть что-нибудь для чата?
-                for line in self.objDMconnect.left_for_chat:
-                    self.add_message_to_chat(line)
+            self.has_it_got_anything_left_for_chat()
         return user_list
 
     def get_messages_for_chat(self) -> List[str]:
@@ -100,6 +112,7 @@ class Application:
         *
         * @return Список строк для чата
         """
+        self.has_it_got_anything_left_for_chat()
         messages = []
         if self.objDMconnect.is_connected:
             self.user_listbox_items = self.get_user_list()
@@ -208,7 +221,6 @@ class Application:
                 try:
                     self.task_queue.put(("execute_command", message))
                     Miscellaneous.print_message(f"Отправлено: {message}")
-                    Miscellaneous.print_message("Ниже приведены строки ответа от сервера.")
                 except Exception:
                     Miscellaneous.print_message("Ошибка при постановке задачи на выполнение команды.")
 
@@ -216,8 +228,17 @@ class Application:
         """
         * Добавляет сообщение в область чата
         """
+        if len(message) > MAX_STRING: # обрезаем слишком длинную строку
+            message = message[:MAX_STRING - 3] + "..."
         self.chat_text.config(state=NORMAL)
         self.chat_text.insert(END, message + "\n")
+        try: # удаляем старые строки, если превышен лимит строк
+            line_count = int(self.chat_text.index('end-1c').split('.')[0])
+        except Exception:
+            line_count = 0
+        if line_count > MAX_LINES:
+            remove_lines = line_count - MAX_LINES
+            self.chat_text.delete('1.0', f'{remove_lines + 1}.0') # удалить первые remove_lines строк (1.0 по числам линий)
         self.chat_text.config(state=DISABLED)
         self.chat_text.see(END)
 
@@ -275,10 +296,10 @@ class Application:
                     # периодически инициируем опрос сервера на новые сообщения/список пользователей
                     if self.objDMconnect is not None and self.objDMconnect.is_connected:
                         try:
-                            messages = self.objDMconnect.get_messages_for_chat()
+                            messages = self.get_messages_for_chat()
                             if messages:
                                 self.result_queue.put(("messages", messages))
-                            users = self.objDMconnect.get_user_list()
+                            users = self.get_user_list()
                             if users:
                                 self.result_queue.put(("users", users))
                         except Exception:
@@ -301,10 +322,10 @@ class Application:
                 elif cmd_type == "initial_poll":
                     # Начальный асинхронный опрос: получить пользователей и сообщения сразу после старта
                     try:
-                        users = self.objDMconnect.get_user_list()
+                        users = self.get_user_list()
                         if users:
                             self.result_queue.put(("users", users))
-                        messages = self.objDMconnect.get_messages_for_chat()
+                        messages = self.get_messages_for_chat()
                         if messages:
                             self.result_queue.put(("messages", messages))
                     except Exception:
