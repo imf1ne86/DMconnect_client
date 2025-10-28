@@ -141,6 +141,8 @@ class DMconnect:
                 response_lines: List[str] = []
                 response_lines = self.read_socket(self.sock)
                 self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
+                for line in response_lines:
+                    messages.append(line)
             else:
                 if random.choice([True, False, False]): # Пример: ~33% шанс получить новые сообщения
                     messages.append("Alex: Привет всем!")
