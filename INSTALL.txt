@@ -1,0 +1,24 @@
+КОМПИЛЯЦИЯ ПРОГРАММЫ
+
+Текущая программа написана на языке программирования Python. Она может выполняться
+без какой-либо предварительной компиляции, поскольку код на Python является
+интерпретируемым. Тем не менее если Вам вдруг понадобилось скомпилировать программу,
+это можно сделать хоть под Microsoft Windows, хоть под Linux.
+
+Компиляция под Microsoft Windows:
+$ pip3 install --trusted-host pypi.org --trusted-host files.pythonhosted.org PyInstaller
+$ pyinstaller -F -w --name "DMconnect_client" main.py
+
+Компиляция под Linux:
+$ pip3 install --trusted-host pypi.org --trusted-host files.pythonhosted.org PyInstaller
+$ sudo apt-get install build-essential python3-dev && sudo apt-get clean
+$ cd ./DMconnect_client && pyinstaller -F -w --name "DMconnect_client" main.py
+
+СОСТАВ ПРОГРАММЫ
+
+После того как программа собрана (скомпилирована), убедитесь, что в ней, помимо самого
+исполнительного файла, также присутствуют файлы "logo.ico", "settings.ini". Например,
+для версии под Microsoft Windows состав программного обеспечения должен выглядеть
+следующим образом: "DMconnect_client.exe", "logo.ico" и "settings.ini".
+
+-- EOF

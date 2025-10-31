@@ -12,7 +12,7 @@
 from tkinter import *
 from tkinter import ttk
 from tkinter import messagebox
-from typing import List, Set
+from typing import Optional, List, Set
 from socket import socket, AF_INET, SOCK_STREAM, timeout
 from socket import SOL_SOCKET, SO_KEEPALIVE, IPPROTO_TCP
 try: # решение проблемы "ImportError: cannot import name 'TCP_KEEPCNT' from 'socket'"
@@ -48,10 +48,10 @@ debugged: bool = False # режим отладки (по умолчанию от
 
 class DMconnect:
 
-    connect_window: Toplevel = None
-    root: Tk = None # родительское окно
+    connect_window: Optional[Toplevel] = None
+    root: Optional[Tk] = None # родительское окно
 
-    sock: socket = None
+    sock: Optional[socket] = None
     is_connected: bool = False
     is_authenticated: bool = False # признак аутентификации пользователя
     is_telnet: bool = False # признак Telnet-совместимого обмена данными
@@ -114,7 +114,7 @@ class DMconnect:
             for line in response_lines: # проверяем, есть ли что-нибудь от сервера для чата в ответе
                 if not line.startswith(LIST_OF_USERS):
                     self.left_for_chat.add(line)
-            members_line: str = None
+            members_line: Optional[str] = None
             for line in response_lines:
                 if line.startswith(LIST_OF_USERS):
                     members_line = line
@@ -224,12 +224,12 @@ class DMconnect:
         self.host_entry.focus_set()
 
     def on_connect_button_click(self):
-        host = self.host_entry.get()
-        port_str = self.port_entry.get()
-        login = self.login_entry.get()
-        password = self.password_entry.get()
+        host: str = self.host_entry.get()
+        port_str: str = self.port_entry.get()
+        login: str = self.login_entry.get()
+        password: str = self.password_entry.get()
 
-        port = None
+        port: Optional[int] = None
         if port_str:
             try:
                 port = int(port_str)
@@ -254,7 +254,7 @@ class DMconnect:
         response_lines: List[str] = []
         if self.is_connected: # есть вообще подключение к серверу?
             if not debugged:
-                line: str = ""
+                line: Optional[str] = None
                 if not self.is_telnet:
                     try:
                         line = s.recv(32768).decode(CODEPAGE).strip()

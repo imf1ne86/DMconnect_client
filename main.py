@@ -14,14 +14,13 @@
 """
 
 import sys, os
-from typing import List, Set
+from typing import Optional, List
 from tkinter import *
 from tkinter import ttk
 
 import threading
 import queue
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
 
 from dmconnect import DMconnect
 from miscellaneous import Miscellaneous
@@ -37,7 +36,7 @@ MAX_LINES: int = 500  # количество строк, хранимых в ч�
 MAX_STRING: int = 1024  # максимальное число символов в одной строке чата
 
 # --- Основное окно ---
-root: Tk = None
+root: Optional[Tk] = None
 try:
     root = Tk()
 except Exception:
@@ -46,13 +45,13 @@ except Exception:
 
 class Application:
 
-    objDMconnect: DMconnect = None
+    objDMconnect: Optional[DMconnect] = None
 
-    task_queue: queue.Queue = None
-    result_queue: queue.Queue = None
+    task_queue: Optional[queue.Queue] = None
+    result_queue: Optional[queue.Queue] = None
     worker_executor: Optional[ThreadPoolExecutor] = None
     worker_thread: Optional[threading.Thread] = None
-    worker_stop_event: threading.Event = None
+    worker_stop_event: Optional[threading.Event] = None
 
     def __init__(self):
         self.objDMconnect = DMconnect(root)
