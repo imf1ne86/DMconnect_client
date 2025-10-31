@@ -361,10 +361,13 @@ class Application:
         global root
         if self.objDMconnect is not None: # попытка корректного завершения работы с сервером DMconnect
             if self.objDMconnect.is_connected == True and self.objDMconnect.sock is not None:
-                try:
-                    self.objDMconnect.sock.close()
-                except Exception:
-                    pass
+                if self.objDMconnect.is_native:
+                    self.objDMconnect.dm_obj.close()
+                else:
+                    try:
+                        self.objDMconnect.sock.close()
+                    except Exception:
+                        pass
                 self.objDMconnect.sock = None
                 self.objDMconnect.is_connected = False
         try: # остановка фонового воркера

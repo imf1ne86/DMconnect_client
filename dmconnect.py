@@ -34,6 +34,7 @@ import configparser
 import inspect
 import errno
 
+from dmconn import DMconn # подключение класса для работы с протоколом DMconnect
 from miscellaneous import Miscellaneous
 from models import Constant
 
@@ -52,9 +53,11 @@ class DMconnect:
     root: Optional[Tk] = None # родительское окно
 
     sock: Optional[socket] = None
+    dm_obj: Optional[DMconn] = None
     is_connected: bool = False
     is_authenticated: bool = False # признак аутентификации пользователя
     is_telnet: bool = False # признак Telnet-совместимого обмена данными
+    is_native: bool = True # нативный протокол DMconnect
     left_for_chat: Set[str] = set() # строки ответа от сервера для чата
 
     def __init__(self, p_parent: Tk):
@@ -84,9 +87,10 @@ class DMconnect:
         response_lines: List[str] = []
         if self.is_connected: # есть вообще подключение к серверу?
             if not debugged:
-                Miscellaneous.print_message("Отправка ping на сервер.")
-                response_lines = self.execute_command(self.sock, PING_CMD)
-                self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
+                if not self.is_native:
+                    Miscellaneous.print_message("Отправка ping на сервер.")
+                    response_lines = self.execute_command(self.sock, PING_CMD)
+                    self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
     
     def get_user_list(self) -> List[str]:
         """
@@ -160,6 +164,7 @@ class DMconnect:
         GLOBAL_SECTION: str = "global"
         DEBUG: str = "debug"
         TELNET: str = "telnet"
+        NATIVE: str = "native"
         if Miscellaneous.is_file_readable(Constant.SETTINGS_FILE.value):
             config = configparser.ConfigParser()
             try:
@@ -168,18 +173,22 @@ class DMconnect:
                     if not debugged: # включали и настраивали уже отладку?
                         if GLOBAL_SECTION in config and DEBUG in config[GLOBAL_SECTION]:
                             debugged = (config[GLOBAL_SECTION][DEBUG].upper().strip() == "Y")
-                            if debugged:
-                                Miscellaneous.print_message("Включён режим отладки.")
                         if GLOBAL_SECTION in config and TELNET in config[GLOBAL_SECTION]:
                             self.is_telnet = (config[GLOBAL_SECTION][TELNET].upper().strip() == "Y")
-                            if self.is_telnet:
-                                Miscellaneous.print_message("Включён режим совместимости с Telnet.")
+                        if GLOBAL_SECTION in config and NATIVE in config[GLOBAL_SECTION]:
+                            self.is_native = (config[GLOBAL_SECTION][NATIVE].upper().strip() == "Y")
             except FileNotFoundError:
                 Miscellaneous.print_message(f"Ошибка: Файл настроек не найден: {Constant.SETTINGS_FILE.value}")
                 raise
             except Exception as e:
                 Miscellaneous.print_message(f"Ошибка при чтении файла настроек: {e}")
                 raise
+        if debugged:
+            Miscellaneous.print_message("Включён режим отладки.")
+        if self.is_telnet:
+            Miscellaneous.print_message("Включён режим совместимости с Telnet.")
+        if self.is_native:
+            Miscellaneous.print_message("Включена поддержка нативного протокола DMconnect.")
 
     def build_connect_form(self):
         """
@@ -254,86 +263,18 @@ class DMconnect:
         response_lines: List[str] = []
         if self.is_connected: # есть вообще подключение к серверу?
             if not debugged:
-                line: Optional[str] = None
-                if not self.is_telnet:
-                    try:
-                        line = s.recv(32768).decode(CODEPAGE).strip()
-                        if line is not None and not "".__eq__(line):
-                            response_lines.append(line)
-                    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError): # фатальная сетевая ошибка - закрываем сокет
-                        Miscellaneous.print_message(DISCONNECT_MESSAGE)
-                        try:
-                            s.close()
-                        except Exception:
-                            pass
-                        self.sock = None
-                        self.is_connected = False
-                        raise
-                    except OSError as e:
-                        if e.errno in (errno.ENETDOWN, errno.ENETUNREACH, errno.ECONNRESET, errno.ECONNABORTED, errno.ECONNREFUSED): # фатальная сетевая ошибка - закрываем сокет
-                            Miscellaneous.print_message(DISCONNECT_MESSAGE)
-                            try:
-                                s.close()
-                            except Exception:
-                                pass
-                            self.sock = None
-                            self.is_connected = False
-                            raise
-                        else:
-                            pass
-                    except Exception:
-                        pass
+                if self.is_native:
+                    if len(self.dm_obj.msg_buffer) > 0:
+                        for msg_b in self.dm_obj.msg_buffer:
+                            response_lines.append(msg_b)
+                        self.dm_obj.msg_buffer.clear()
                 else:
-                    try:
-                        # читаем ответ построчно через file-like объект
-                        rf = s.makefile("r", encoding = CODEPAGE, newline = NEW_LINE)
-                        try:
-                            while True:
-                                try:
-                                    line = rf.readline()
-                                except timeout:
-                                    break
-                                if line is None or "".__eq__(line): # EOF - сервер закрыл соединение
-                                    self.is_connected = False
-                                    break
-                                line = line.rstrip("\r\n")
-                                if "".__eq__(line): # пустая строка - считаем конец ответа
-                                    break
-                                response_lines.append(line)
-                        finally:
-                            try:
-                                rf.close()
-                            except Exception:
-                                pass
-                    except Exception:
-                        try:
-                            s.close()
-                        except Exception:
-                            pass
-                        self.sock = None
-                        self.is_connected = False
-                        raise
-        self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
-        return response_lines
-
-    def execute_command(self, s: socket, cmd: str) -> Set[str]:
-        """
-        * Команда для сервера
-        *
-        * @param s Экземпляр сокета
-        * @param cmd Команда
-        * @return Массив строк
-        """
-        cmd2: str = f"{cmd.strip()}{NEW_LINE}"
-        foo: str = inspect.currentframe().f_code.co_name
-        response_lines: List[str] = []
-        if self.is_connected: # есть вообще подключение к серверу?
-            if not debugged:
-                try:
-                    Miscellaneous.print_message(f"{foo}(): Отправка команды {chr(34)}{cmd}{chr(34)} серверу...")
+                    line: Optional[str] = None
                     if not self.is_telnet:
                         try:
-                            s.send(cmd2.strip().encode(CODEPAGE))
+                            line = s.recv(32768).decode(CODEPAGE).strip()
+                            if line is not None and not "".__eq__(line):
+                                response_lines.append(line)
                         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError): # фатальная сетевая ошибка - закрываем сокет
                             Miscellaneous.print_message(DISCONNECT_MESSAGE)
                             try:
@@ -358,14 +299,94 @@ class DMconnect:
                         except Exception:
                             pass
                     else:
-                        s.sendall(cmd2.encode(CODEPAGE))
+                        try:
+                            # читаем ответ построчно через file-like объект
+                            rf = s.makefile("r", encoding = CODEPAGE, newline = NEW_LINE)
+                            try:
+                                while True:
+                                    try:
+                                        line = rf.readline()
+                                    except timeout:
+                                        break
+                                    if line is None or "".__eq__(line): # EOF - сервер закрыл соединение
+                                        self.is_connected = False
+                                        break
+                                    line = line.rstrip("\r\n")
+                                    if "".__eq__(line): # пустая строка - считаем конец ответа
+                                        break
+                                    response_lines.append(line)
+                            finally:
+                                try:
+                                    rf.close()
+                                except Exception:
+                                    pass
+                        except Exception:
+                            try:
+                                s.close()
+                            except Exception:
+                                pass
+                            self.sock = None
+                            self.is_connected = False
+                            raise
+        self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
+        return response_lines
+
+    def execute_command(self, s: socket, cmd: str) -> Set[str]:
+        """
+        * Команда для сервера
+        *
+        * @param s Экземпляр сокета
+        * @param cmd Команда
+        * @return Массив строк
+        """
+        cmd2: str = f"{cmd.strip()}{NEW_LINE}"
+        foo: str = inspect.currentframe().f_code.co_name
+        response_lines: List[str] = []
+        if self.is_connected: # есть вообще подключение к серверу?
+            if not debugged:
+                try:
+                    Miscellaneous.print_message(f"{foo}(): Отправка команды {chr(34)}{cmd}{chr(34)} серверу...")
+                    if self.is_native:
+                        self.dm_obj.write(cmd.strip())
+                    else:
+                        if not self.is_telnet:
+                            try:
+                                s.send(cmd2.strip().encode(CODEPAGE))
+                            except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError): # фатальная сетевая ошибка - закрываем сокет
+                                Miscellaneous.print_message(DISCONNECT_MESSAGE)
+                                try:
+                                    s.close()
+                                except Exception:
+                                    pass
+                                self.sock = None
+                                self.is_connected = False
+                                raise
+                            except OSError as e:
+                                if e.errno in (errno.ENETDOWN, errno.ENETUNREACH, errno.ECONNRESET, errno.ECONNABORTED, errno.ECONNREFUSED): # фатальная сетевая ошибка - закрываем сокет
+                                    Miscellaneous.print_message(DISCONNECT_MESSAGE)
+                                    try:
+                                        s.close()
+                                    except Exception:
+                                        pass
+                                    self.sock = None
+                                    self.is_connected = False
+                                    raise
+                                else:
+                                    pass
+                            except Exception:
+                                pass
+                        else:
+                            s.sendall(cmd2.encode(CODEPAGE))
                     time.sleep(DELAY)
                     response_lines = self.read_socket(s)
                 except Exception:
-                    try:
-                        s.close()
-                    except Exception:
-                        pass
+                    if self.is_native:
+                        self.dm_obj.close()
+                    else:
+                        try:
+                            s.close()
+                        except Exception:
+                            pass
                     self.sock = None
                     self.is_connected = False
                     raise
@@ -382,74 +403,81 @@ class DMconnect:
         * @param password Пароль пользователя на сервере DMconnect
         """
         Miscellaneous.print_message(f"Попытка подключения к {host}:{port} с логином {login}...")
-        s: socket = socket(AF_INET, SOCK_STREAM)
-        if not self.is_telnet:
-            try:
-                s.connect((host, port))
-                self.sock = s # сохраняем сокет в экземпляре для дальнейшего использования
-            except Exception:
-                try:
-                    s.close()
-                except Exception:
-                    pass
-                self.sock = None
-                self.is_connected = False
-                raise
+        if self.is_native:
+            self.dm_obj = DMconn(host, port, login, password)
+            self.sock = self.dm_obj.sock
         else:
-            """
-            * *************************
-            * УСТАНОВКА СОЕДИНЕНИЯ KEEP-ALIVE
-            * (НАЧАЛО)
-            * *************************
-            """
-            TCP_KEEPALIVE: int = 0x10
-            try:
-                s.setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
-                if sys.platform.startswith("linux"):
-                    if hasattr(socket, "TCP_KEEPIDLE"):
-                        s.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 60) # время простоя до первого keepalive
-                    if hasattr(socket, "TCP_KEEPINTVL"):
-                        s.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 10) # интервал между keepalive
-                    if hasattr(socket, "TCP_KEEPCNT"):
-                        s.setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 3) # число попыток до разрыва
-                elif sys.platform.startswith("darwin") or "bsd" in sys.platform:
-                    s.setsockopt(IPPROTO_TCP, TCP_KEEPALIVE, 60)
-            except AttributeError:
-                pass # какая-то опция не поддерживается на текущей платформе
-            except OSError:
-                pass # ошибка при установке опции
-            """
-            * *************************
-            * УСТАНОВКА СОЕДИНЕНИЯ KEEP-ALIVE
-            * (КОНЕЦ)
-            * *************************
-            """
-            try:
-                s.setblocking(True)
-                s.settimeout(5.0)
-                s.connect((host, port))
-                self.sock = s # сохраняем сокет в экземпляре для дальнейшего использования
-            except Exception:
+            s: socket = socket(AF_INET, SOCK_STREAM)
+            if not self.is_telnet:
                 try:
-                    s.close()
+                    s.connect((host, port))
+                    self.sock = s # сохраняем сокет в экземпляре для дальнейшего использования
                 except Exception:
-                    pass
-                self.sock = None
-                self.is_connected = False
-                raise
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                    self.sock = None
+                    self.is_connected = False
+                    raise
+            else:
+                """
+                * *************************
+                * УСТАНОВКА СОЕДИНЕНИЯ KEEP-ALIVE
+                * (НАЧАЛО)
+                * *************************
+                """
+                TCP_KEEPALIVE: int = 0x10
+                try:
+                    s.setsockopt(SOL_SOCKET, SO_KEEPALIVE, 1)
+                    if sys.platform.startswith("linux"):
+                        if hasattr(socket, "TCP_KEEPIDLE"):
+                            s.setsockopt(IPPROTO_TCP, TCP_KEEPIDLE, 60) # время простоя до первого keepalive
+                        if hasattr(socket, "TCP_KEEPINTVL"):
+                            s.setsockopt(IPPROTO_TCP, TCP_KEEPINTVL, 10) # интервал между keepalive
+                        if hasattr(socket, "TCP_KEEPCNT"):
+                            s.setsockopt(IPPROTO_TCP, TCP_KEEPCNT, 3) # число попыток до разрыва
+                    elif sys.platform.startswith("darwin") or "bsd" in sys.platform:
+                        s.setsockopt(IPPROTO_TCP, TCP_KEEPALIVE, 60)
+                except AttributeError:
+                    pass # какая-то опция не поддерживается на текущей платформе
+                except OSError:
+                    pass # ошибка при установке опции
+                """
+                * *************************
+                * УСТАНОВКА СОЕДИНЕНИЯ KEEP-ALIVE
+                * (КОНЕЦ)
+                * *************************
+                """
+                try:
+                    s.setblocking(True)
+                    s.settimeout(5.0)
+                    s.connect((host, port))
+                    self.sock = s # сохраняем сокет в экземпляре для дальнейшего использования
+                except Exception:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
+                    self.sock = None
+                    self.is_connected = False
+                    raise
         if self.sock is not None: # выставление признака успешного или неуспешного подключения
             self.is_connected = True
         else:
             self.is_connected = False
         Miscellaneous.print_message(f"Подключение {'установлено' if self.is_connected else 'не установлено'}.")
         if self.is_connected: # аутентификации пользователя
-            Miscellaneous.print_message("Отправка на сервер данных аутентификации пользователя.")
-            cmd: str = f"/login {login} {password}"
-            response_lines: Set[str] = set()
-            response_lines = self.execute_command(s, cmd)
-            self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
-            self.is_authenticated = True
-            Miscellaneous.print_message("Данные аутентификации пользователя отправлены на сервер.")
+            if not self.is_native:
+                Miscellaneous.print_message("Отправка на сервер данных аутентификации пользователя.")
+                cmd: str = f"/login {login} {password}"
+                response_lines: Set[str] = set()
+                response_lines = self.execute_command(s, cmd)
+                self.backtrace(response_lines, inspect.currentframe().f_code.co_name)
+                self.is_authenticated = True
+                Miscellaneous.print_message("Данные аутентификации пользователя отправлены на сервер.")
+            else:
+                self.is_authenticated = True
 
     def connect(self, host: str, port: int, login: str, password: str) -> None:
         if not debugged:
