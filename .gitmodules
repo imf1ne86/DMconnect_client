@@ -1,0 +1,3 @@
+[submodule "my_python_libs"]
+	path = my_python_libs
+	url = https://github.com/imf1ne86/my_python_libs.git
